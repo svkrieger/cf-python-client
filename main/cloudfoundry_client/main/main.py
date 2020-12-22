@@ -6,7 +6,7 @@ import os
 import re
 import sys
 from http import HTTPStatus
-from typing import Tuple, Callable, Any
+from typing import Tuple, Callable, Any, Dict
 
 from requests.exceptions import ConnectionError
 
@@ -15,7 +15,7 @@ from cloudfoundry_client.client import CloudFoundryClient
 from cloudfoundry_client.errors import InvalidStatusCode
 from cloudfoundry_client.json_object import JsonObject
 from cloudfoundry_client.main.apps_command_domain import AppCommandDomain
-from cloudfoundry_client.main.command_domain import CommandDomain, Command
+from cloudfoundry_client.main.command_domain import CommandDomain, Command, ParserGenerator, Parser
 from cloudfoundry_client.main.operation_commands import generate_push_command
 from cloudfoundry_client.main.tasks_command_domain import TaskCommandDomain
 
@@ -151,8 +151,8 @@ def _get_v2_client_domain(client: CloudFoundryClient, domain: str) -> Any:
 def generate_oauth_token_command() -> Tuple[Command, str]:
     entry = 'oauth-token'
 
-    def generate_parser(parser: argparse._SubParsersAction):
-        parser.add_parser(entry)
+    def generate_parser(parser: ParserGenerator):
+        parser(entry)
 
     def execute(client: CloudFoundryClient, arguments: argparse.Namespace):
         token = client._access_token
@@ -225,11 +225,19 @@ def main():
     subparsers = parser.add_subparsers(title='Commands', dest='action', description='\n'.join(descriptions))
     subparsers.add_parser('import_from_cf_cli', help='Copy CF CLI configuration into our configuration')
 
+    def parser_generator(name: str) -> Parser:
+        p = subparsers.add_parser(name)
+
+        def result(arg_name: str, kwargs: Dict[str, Any]):
+            p.add_argument(arg_name, **kwargs)
+
+        return result
+
     for command in commands:
-        command.generate_parser(subparsers)
+        command.generate_parser(parser_generator)
     for other_command_domain in [operation_commands, others_commands]:
         for command, _ in other_command_domain:
-            command.generate_parser(subparsers)
+            command.generate_parser(parser_generator)
 
     arguments = parser.parse_args()
     if arguments.action == 'import_from_cf_cli':

@@ -2,20 +2,23 @@ import functools
 import json
 import os
 import re
-from argparse import _SubParsersAction, Namespace
 from collections import OrderedDict
 from http import HTTPStatus
-from typing import Callable, Any, List
+from typing import Callable, Any, List, Dict
 
 from cloudfoundry_client.client import CloudFoundryClient
 from cloudfoundry_client.errors import InvalidStatusCode
 from cloudfoundry_client.json_object import JsonObject
 
+Parser = Callable[[str, Dict[str, Any]], Any]
+
+ParserGenerator = Callable[[str], Parser]
+
 
 class Command(object):
     def __init__(self, entry: str,
-                 generate_parser: Callable[[_SubParsersAction], Any],
-                 execute: Callable[[CloudFoundryClient, Namespace], Any]):
+                 generate_parser: Callable[[ParserGenerator], Any],
+                 execute: Callable[[CloudFoundryClient, object], Any]):
         self.entry = entry
         self.generate_parser = generate_parser
         self.execute = execute
@@ -64,14 +67,14 @@ class CommandDomain(object):
         description.extend(['   %s : %s' % (k, v) for k, v in self.extra_description.items()])
         return description
 
-    def generate_parser(self, parser: _SubParsersAction):
+    def generate_parser(self, parser: ParserGenerator):
         for command in self.commands.values():
             command.generate_parser(parser)
 
     def is_handled(self, action: str) -> bool:
         return action in self.commands
 
-    def execute(self, client: CloudFoundryClient, action: str, arguments: Namespace):
+    def execute(self, client: CloudFoundryClient, action: str, arguments: object):
         return self.commands[action].execute(client, arguments)
 
     def _get_client_domain(self, client: CloudFoundryClient) -> Any:
@@ -121,7 +124,7 @@ class CommandDomain(object):
     def create(self) -> Command:
         entry = self._create_entry()
 
-        def execute(client: CloudFoundryClient, arguments: Namespace):
+        def execute(client: CloudFoundryClient, arguments: object):
             data = None
             if os.path.isfile(arguments.entity[0]):
                 with open(arguments.entity[0], 'r') as f:
@@ -136,18 +139,18 @@ class CommandDomain(object):
                     raise ValueError('entity: must be either a valid json file path or a json object')
             print(self._get_client_domain(client)._create(data).json())
 
-        def generate_parser(parser: _SubParsersAction):
-            create_parser = parser.add_parser(entry)
-            create_parser.add_argument('entity', metavar='entities', type=str, nargs=1,
-                                       help='Either a path of the json file containing the %s or a json object or the json %s object' % (
-                                           self.client_domain, self.client_domain))
+        def generate_parser(parser: ParserGenerator):
+            create_parser = parser(entry)
+            create_parser('entity', dict(metavar='entities', type=str, nargs=1,
+                                         help='Either a path of the json file containing the %s or a json object or the json %s object' % (
+                                             self.client_domain, self.client_domain)))
 
         return Command(entry, generate_parser, execute)
 
     def delete(self) -> Command:
         entry = self._delete_entry()
 
-        def execute(client: CloudFoundryClient, arguments: Namespace):
+        def execute(client: CloudFoundryClient, arguments: object):
             if self.is_guid(arguments.id[0]):
                 self._get_client_domain(client)._remove(arguments.id[0])
             elif self.allow_retrieve_by_name:
@@ -160,34 +163,34 @@ class CommandDomain(object):
             else:
                 raise ValueError('id: %s: does not allow search by name' % self.client_domain)
 
-        def generate_parser(parser: _SubParsersAction):
-            delete_parser = parser.add_parser(entry)
-            delete_parser.add_argument('id', metavar='ids', type=str, nargs=1,
-                                       help='The id. Can be UUID or name (first found then)'
-                                       if self.allow_retrieve_by_name else 'The id (UUID)')
+        def generate_parser(parser: ParserGenerator):
+            delete_parser = parser(entry)
+            delete_parser('id', dict(metavar='ids', type=str, nargs=1,
+                                     help='The id. Can be UUID or name (first found then)'
+                                     if self.allow_retrieve_by_name else 'The id (UUID)'))
 
         return Command(entry, generate_parser, execute)
 
     def get(self) -> Command:
         entry = self._get_entry()
 
-        def execute(client: CloudFoundryClient, arguments: Namespace):
+        def execute(client: CloudFoundryClient, arguments: object):
             resource_id = self.resolve_id(arguments.id[0],
                                           functools.partial(self.find_by_name, client))
             print(self._get_client_domain(client).get(resource_id).json(indent=1))
 
-        def generate_parser(parser: _SubParsersAction):
-            get_parser = parser.add_parser(entry)
-            get_parser.add_argument('id', metavar='ids', type=str, nargs=1,
-                                    help='The id. Can be UUID or name (first found then)'
-                                    if self.allow_retrieve_by_name else 'The id (UUID)')
+        def generate_parser(parser: ParserGenerator):
+            get_parser = parser(entry)
+            get_parser('id', dict(metavar='ids', type=str, nargs=1,
+                                  help='The id. Can be UUID or name (first found then)'
+                                  if self.allow_retrieve_by_name else 'The id (UUID)'))
 
         return Command(entry, generate_parser, execute)
 
     def list(self) -> Command:
         entry = self._list_entry()
 
-        def execute(client: CloudFoundryClient, arguments: Namespace):
+        def execute(client: CloudFoundryClient, arguments: object):
             filter_list = dict()
             for filter_parameter in self.filter_list_parameters:
                 filter_value = getattr(arguments, filter_parameter)
@@ -199,11 +202,12 @@ class CommandDomain(object):
                 else:
                     print(self.id(entity))
 
-        def generate_parser(parser: _SubParsersAction):
-            list_parser = parser.add_parser(entry)
+        def generate_parser(parser: ParserGenerator):
+            list_parser = parser(entry)
             for filter_parameter in self.filter_list_parameters:
-                list_parser.add_argument('-%s' % filter_parameter, action='store', dest=filter_parameter, type=str,
-                                         default=None, help='Filter with %s' % filter_parameter)
+                list_parser('-%s' % filter_parameter,
+                            dict(action='store', dest=filter_parameter, type=str,
+                                 default=None, help='Filter with %s' % filter_parameter))
 
         return Command(entry, generate_parser, execute)
 

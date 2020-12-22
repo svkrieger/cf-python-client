@@ -1,8 +1,7 @@
-from argparse import Action, _SubParsersAction, Namespace
 from typing import Callable
 
 from cloudfoundry_client.client import CloudFoundryClient
-from cloudfoundry_client.main.command_domain import CommandDomain, Command
+from cloudfoundry_client.main.command_domain import CommandDomain, Command, ParserGenerator
 
 
 class AppCommandDomain(CommandDomain):
@@ -60,7 +59,7 @@ class AppCommandDomain(CommandDomain):
         return Command(entry, self._generate_id_command_parser(entry), execute)
 
     def app_routes(self) -> Command:
-        def execute(client: CloudFoundryClient, arguments: Namespace):
+        def execute(client: CloudFoundryClient, arguments: object):
             resource_id = self.resolve_id(arguments.id[0], lambda x: self._get_client_domain(client).get_first(name=x))
             for entity in getattr(self._get_client_domain(client), 'list_routes')(resource_id):
                 print('%s - %s' % (entity['metadata']['guid'], entity['entity']['host']))
@@ -68,25 +67,25 @@ class AppCommandDomain(CommandDomain):
         return Command('app_routes', self._generate_id_command_parser('app_routes'), execute)
 
     def restart_instance(self) -> Command:
-        def generate_parser(parser: _SubParsersAction):
-            command_parser = parser.add_parser('restart_instance')
-            command_parser.add_argument('id', metavar='ids', type=str, nargs=1,
-                                        help='The id. Can be UUID or name (first found then)')
-            command_parser.add_argument('instance_id', metavar='instance_ids', type=int, nargs=1,
-                                        help='The instance id')
+        def generate_parser(parser: ParserGenerator):
+            command_parser = parser('restart_instance')
+            command_parser('id', dict(metavar='ids', type=str, nargs=1,
+                           help='The id. Can be UUID or name (first found then)'))
+            command_parser('instance_id', dict(metavar='instance_ids', type=int, nargs=1,
+                           help='The instance id'))
 
-        def execute(client: CloudFoundryClient, arguments: Namespace):
+        def execute(client: CloudFoundryClient, arguments: object):
             app_domain = self._get_client_domain(client)
             resource_id = self.resolve_id(arguments.id[0], lambda x: app_domain.get_first(name=x))
             getattr(app_domain, 'restart_instance')(resource_id, int(arguments.instance_id[0]))
 
-        return  Command('restart_instance', generate_parser, execute)
+        return Command('restart_instance', generate_parser, execute)
 
     @staticmethod
-    def _generate_id_command_parser(entry: str) -> Callable[[_SubParsersAction], None]:
-        def generate_parser(parser: _SubParsersAction):
-            command_parser = parser.add_parser(entry)
-            command_parser.add_argument('id', metavar='ids', type=str, nargs=1,
-                                        help='The id. Can be UUID or name (first found then)')
+    def _generate_id_command_parser(entry: str) -> Callable[[ParserGenerator], None]:
+        def generate_parser(parser: ParserGenerator):
+            command_parser = parser(entry)
+            command_parser('id', dict(metavar='ids', type=str, nargs=1,
+                           help='The id. Can be UUID or name (first found then)'))
 
         return generate_parser
