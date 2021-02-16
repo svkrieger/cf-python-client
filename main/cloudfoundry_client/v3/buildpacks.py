@@ -1,6 +1,6 @@
 from typing import Optional
 
-from cloudfoundry_client.v3.entities import EntityManager, Entity
+from cloudfoundry_client.v3.entities import EntityManager, Entity, JobManager
 
 
 class BuildpackManager(EntityManager):
